@@ -40,7 +40,7 @@ __host__ __device__ float3 normalizeGPU(float3 v)
 // Utility function if you'd like to convert the depth buffer to an integer format.
 __host__ __device__ int depthFloatToInt(float value) {
 	value = (value + 1.0f) * 0.5f;
-    return static_cast<int>(static_cast<double>(value) * static_cast<double>(16777216)); 
+    return static_cast<int>(static_cast<double>(value) * static_cast<double>(16777216));
 }
 
 __host__ __device__ bool isPointInTriangle(
@@ -196,7 +196,7 @@ __device__ float3 runFragmentShader(
 
 	for (int lightSource = 0; lightSource < lightSourceCount; lightSource++) {
 		globalLight l = lightSources[lightSource];
-		float lightNormalDotProduct = 
+		float lightNormalDotProduct =
 			normal.x * l.direction.x + normal.y * l.direction.y + normal.z * l.direction.z;
 
 		float3 diffuseReflectionColour;
@@ -247,6 +247,20 @@ __device__ void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
 	miny = max(miny, (unsigned int) 0);
 	maxy = min(maxy, height);
 
+	int pixelWidth = maxx - minx;
+	int pixelHeight = maxy - miny;
+	int numberOfPixel = pixelWidth * pixelHeight;
+
+	bool triangleTooBig = numberOfPixel > 96;
+	unsigned int votes = __ballot_sync(0xFFFFFFFF, triangleTooBig);
+	unsigned int count = __popc(votes);
+	if(count > 30) printf("%s\n", "QUI");
+
+	while(__fss(votes) > 0)
+	{
+
+	}
+
 	// We iterate over each pixel in the triangle's bounding box
 	for (unsigned int x = minx; x < maxx; x++) {
 		for (unsigned int y = miny; y < maxy; y++) {
@@ -293,29 +307,39 @@ __global__ void renderMeshes(
         unsigned int width,
         unsigned int height,
         unsigned char* frameBuffer,
-        int* depthBuffer
+        int* depthBuffer,
+				float* scaleQueue,
+				float* distanceOffsetXQueue,
+				float* distanceOffsetYQueue,
+				float* distanceOffsetZQueue
 ) {
 	unsigned int item = blockIdx.x * blockDim.x + threadIdx.x;
 	unsigned int triangleIndex = blockIdx.y * blockDim.y + threadIdx.y;
 	unsigned int meshIndex = blockIdx.z;
-	
+
 	if(item >= totalItemsToRender || meshIndex >= meshCount || triangleIndex >= meshes[meshIndex].vertexCount / 3) {
 		return;
 	}
 
     //for(unsigned int item = 0; item < totalItemsToRender; item++) {
-	//for (unsigned int meshIndex = 0; meshIndex < meshCount; meshIndex++) {  
+	//for (unsigned int meshIndex = 0; meshIndex < meshCount; meshIndex++) {
     //for(unsigned int triangleIndex = 0; triangleIndex < meshes[meshIndex].vertexCount / 3; triangleIndex++) {
 
-	workItemGPU objectToRender = workQueue[item];
+	//workItemGPU objectToRender = workQueue[item];
+	float scale = scaleQueue[item];
+	float3 distanceOffset;
+	distanceOffset.x = distanceOffsetXQueue[item];
+	distanceOffset.y = distanceOffsetYQueue[item];
+	distanceOffset.z = distanceOffsetZQueue[item];
+
 
 	float4 v0 = meshes[meshIndex].vertices[triangleIndex * 3 + 0];
 	float4 v1 = meshes[meshIndex].vertices[triangleIndex * 3 + 1];
 	float4 v2 = meshes[meshIndex].vertices[triangleIndex * 3 + 2];
 
-	runVertexShader(v0, objectToRender.distanceOffset, objectToRender.scale, width, height);
-	runVertexShader(v1, objectToRender.distanceOffset, objectToRender.scale, width, height);
-	runVertexShader(v2, objectToRender.distanceOffset, objectToRender.scale, width, height);
+	runVertexShader(v0, distanceOffset, scale, width, height);
+	runVertexShader(v1, distanceOffset, scale, width, height);
+	runVertexShader(v2, distanceOffset, scale, width, height);
 
 	rasteriseTriangle(v0, v1, v2, meshes[meshIndex], triangleIndex, frameBuffer, depthBuffer, width, height);
 }
@@ -469,10 +493,47 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
     unsigned long counter = 0;
     fillWorkQueue(workQueue, largestBoundingBoxSide, depthLimit, &counter);
 
+		// IMPROVE COALESCENCE BY CREATING AN ARRAY OF DISPLACE OFFSET AND SCALE INSTEAD OF A STRUCT
+
+		// Create the arrays on the CPU
+		float scaleQueue[totalItemsToRender];
+		for (int i = 0; i < totalItemsToRender; i++)
+		{
+			scaleQueue[i] = workQueue[i].scale;
+		}
+
+		float distanceOffsetXQueue[totalItemsToRender];
+		float distanceOffsetYQueue[totalItemsToRender];
+		float distanceOffsetZQueue[totalItemsToRender];
+		for (int i = 0; i < totalItemsToRender; i++)
+		{
+			distanceOffsetXQueue[i] = workQueue[i].distanceOffset.x;
+			distanceOffsetYQueue[i] = workQueue[i].distanceOffset.y;
+			distanceOffsetZQueue[i] = workQueue[i].distanceOffset.z;
+		}
+
+		// Move the arrays on the GPU
+		float* scaleQueueGPU;
+    checkCudaErrors(cudaMalloc((void **)&scaleQueueGPU, sizeof(float) * totalItemsToRender));
+    checkCudaErrors(cudaMemcpy(scaleQueueGPU, (float*)scaleQueue, sizeof(float) * totalItemsToRender, cudaMemcpyHostToDevice));
+
+		float* distanceOffsetXQueueGPU;
+    checkCudaErrors(cudaMalloc((void **)&distanceOffsetXQueueGPU, sizeof(float) * totalItemsToRender));
+    checkCudaErrors(cudaMemcpy(distanceOffsetXQueueGPU, (float*)distanceOffsetXQueue, sizeof(float) * totalItemsToRender, cudaMemcpyHostToDevice));
+
+		float* distanceOffsetYQueueGPU;
+    checkCudaErrors(cudaMalloc((void **)&distanceOffsetYQueueGPU, sizeof(float) * totalItemsToRender));
+    checkCudaErrors(cudaMemcpy(distanceOffsetYQueueGPU, (float*)distanceOffsetYQueue, sizeof(float) * totalItemsToRender, cudaMemcpyHostToDevice));
+
+		float* distanceOffsetZQueueGPU;
+    checkCudaErrors(cudaMalloc((void **)&distanceOffsetZQueueGPU, sizeof(float) * totalItemsToRender));
+    checkCudaErrors(cudaMemcpy(distanceOffsetZQueueGPU, (float*)distanceOffsetZQueue, sizeof(float) * totalItemsToRender, cudaMemcpyHostToDevice));
+
+
     unsigned long workQueueSizeBytes = totalItemsToRender * sizeof(workItemGPU);
 
     workItemGPU* device_workQueue;
-    checkCudaErrors(cudaMalloc(&device_workQueue, workQueueSizeBytes)); 
+    checkCudaErrors(cudaMalloc(&device_workQueue, workQueueSizeBytes));
     checkCudaErrors(cudaMemcpy(device_workQueue, workQueue, workQueueSizeBytes, cudaMemcpyHostToDevice));
 
 
@@ -492,8 +553,12 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
 	// Block y axis: max vertex count
 	// Block z axis: meshCount
 
-	const unsigned int threadsPerWorkQueueBlock = 32;
-	const unsigned int threadsPerVertexBlock = 32;
+	const unsigned int threadsPerWorkQueueBlock = 8;
+	const unsigned int threadsPerVertexBlock = 16;
+
+	std::cout << threadsPerWorkQueueBlock << '\n';
+	std::cout << threadsPerVertexBlock << '\n';
+	std::cout << meshes.size() << '\n';
 
 	GPUMesh* device_meshArray;
 	checkCudaErrors(cudaMalloc(&device_meshArray, meshes.size() * sizeof(GPUMesh)));
@@ -514,7 +579,9 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
 	renderMeshes<<<gridDimensions, blockDimensions>>>(
 		totalItemsToRender, device_workQueue,
 		device_meshArray, meshes.size(),
-		width, height, device_frameBuffer, device_depthBuffer);
+		width, height, device_frameBuffer, device_depthBuffer,
+		scaleQueueGPU, distanceOffsetXQueueGPU,
+		distanceOffsetYQueueGPU,distanceOffsetZQueueGPU);
 
 	checkCudaErrors(cudaDeviceSynchronize());
 

@@ -1,0 +1,161 @@
+ASSIGNMENT 5
+
+Point 1-a
+
+Around 38.4%
+
+Point 1-b
+
+We can see it from the image
+
+Point 1-c
+
+Line 252 - Thread divergence of 18.9%
+
+Point 1-d
+
+line 310 we have an access pattern efficiency of 16 when ideally could be 4
+
+Point 1-e
+
+Registers - image
+
+Point 1-f
+
+Around 30.8%
+
+Point 1-g 
+
+Around 240 ms
+
+Point 2-d
+
+Around 31.4% Image
+
+Point 2-e
+
+const unsigned int threadsPerWorkQueueBlock = 32;
+const unsigned int threadsPerVertexBlock = 16;
+Occupancy -> 34.5%
+
+const unsigned int threadsPerWorkQueueBlock = 32;
+const unsigned int threadsPerVertexBlock = 8;
+Occupancy -> 43.8%
+
+const unsigned int threadsPerWorkQueueBlock = 16;
+const unsigned int threadsPerVertexBlock = 32;
+Occupancy -> 36.2%
+
+const unsigned int threadsPerWorkQueueBlock = 8;
+const unsigned int threadsPerVertexBlock = 32;
+Occupancy -> 48.9%
+
+const unsigned int threadsPerWorkQueueBlock = 16;
+const unsigned int threadsPerVertexBlock = 16;
+Occupancy -> 44.3%
+
+const unsigned int threadsPerWorkQueueBlock = 8;
+const unsigned int threadsPerVertexBlock = 8;
+Occupancy -> 45.9%
+
+const unsigned int threadsPerWorkQueueBlock = 4;
+const unsigned int threadsPerVertexBlock = 8;
+Occupancy -> 39%
+Limiter -> BlockSize
+IMAGE
+
+const unsigned int threadsPerWorkQueueBlock = 8;
+const unsigned int threadsPerVertexBlock = 4;
+Occupancy -> 40%
+Limiter -> BlockSize
+
+const unsigned int threadsPerWorkQueueBlock = 8;
+const unsigned int threadsPerVertexBlock = 16;
+Occupancy -> 51.5%
+
+Point 2-f
+
+Around 168ms IMAGE
+
+#############################################################################################
+DEPTH 5 
+
+Point 1-a
+
+Around 74.6%
+
+Point 1-b
+
+31.45%
+
+Point 1-c Same as before
+
+Point 1-d Same as before
+
+Point 1-e Register IMAGE
+
+wE USE 49152 REGISTER PER BLOCK OVER 65536 AVAILABLE
+
+Point 1-f
+
+Is 40.3%
+
+Point 1-g
+
+Around 960ms
+
+Point 2-d
+
+Is 40.2%
+
+Point 2-e
+
+const unsigned int threadsPerWorkQueueBlock = 32;
+const unsigned int threadsPerVertexBlock = 16;
+Occupancy -> 40.3%
+Limiter -> Register
+
+const unsigned int threadsPerWorkQueueBlock = 32;
+const unsigned int threadsPerVertexBlock = 8;
+Occupancy -> 50.7%
+
+const unsigned int threadsPerWorkQueueBlock = 16;
+const unsigned int threadsPerVertexBlock = 32;
+Occupancy -> 41.4%
+Limiter -> Register
+
+const unsigned int threadsPerWorkQueueBlock = 8;
+const unsigned int threadsPerVertexBlock = 32;
+Occupancy -> 54.3%
+
+const unsigned int threadsPerWorkQueueBlock = 16;
+const unsigned int threadsPerVertexBlock = 16;
+Occupancy -> 51.6%
+
+const unsigned int threadsPerWorkQueueBlock = 8;
+const unsigned int threadsPerVertexBlock = 8;
+Occupancy -> 48.4%
+Limiter -> Register
+
+const unsigned int threadsPerWorkQueueBlock = 4;
+const unsigned int threadsPerVertexBlock = 8;
+Occupancy -> 41.6%
+Limiter -> BlockSize
+IMAGE
+
+const unsigned int threadsPerWorkQueueBlock = 8;
+const unsigned int threadsPerVertexBlock = 4;
+Occupancy -> 37.9%
+Limiter -> BlockSize
+
+const unsigned int threadsPerWorkQueueBlock = 8;
+const unsigned int threadsPerVertexBlock = 16;
+Occupancy -> 55.6%
+
+Point 2-f
+
+Arounf 734ms 8/16
+
+
+
+

@@ -251,14 +251,54 @@ __device__ void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
 	int pixelHeight = maxy - miny;
 	int numberOfPixel = pixelWidth * pixelHeight;
 
-	bool triangleTooBig = numberOfPixel > 96;
+	bool triangleTooBig = numberOfPixel > 100;
 	unsigned int votes = __ballot_sync(0xFFFFFFFF, triangleTooBig);
 	unsigned int count = __popc(votes);
-	if(count > 30) printf("%s\n", "QUI");
-
-	while(__fss(votes) > 0)
+	if(count == 3)
 	{
+		printf("%s\n", "QUI");
+		while(__ffs(votes) > 0)
+		{
+			unsigned int id =  __ffs(votes)-1;
 
+			float4 v0_Big;
+			float4 v1_Big;
+			float4 v2_Big;
+
+			v0_Big.x = __shfl_sync(0xFFFFFFFF, v0.x, id);
+			v1_Big.x = __shfl_sync(0xFFFFFFFF, v1.x, id);
+			v2_Big.x = __shfl_sync(0xFFFFFFFF, v2.x, id);
+
+			v0_Big.y = __shfl_sync(0xFFFFFFFF, v0.y, id);
+			v1_Big.y = __shfl_sync(0xFFFFFFFF, v1.y, id);
+			v2_Big.y = __shfl_sync(0xFFFFFFFF, v2.y, id);
+
+			v0_Big.z = __shfl_sync(0xFFFFFFFF, v0.z, id);
+			v1_Big.z = __shfl_sync(0xFFFFFFFF, v1.z, id);
+			v2_Big.z = __shfl_sync(0xFFFFFFFF, v2.z, id);
+
+			v0_Big.w = __shfl_sync(0xFFFFFFFF, v0.w, id);
+			v1_Big.w = __shfl_sync(0xFFFFFFFF, v1.w, id);
+			v2_Big.w = __shfl_sync(0xFFFFFFFF, v2.w, id);
+
+			int minx_Big = __shfl_sync(0xFFFFFFFF, minx, id);
+			int maxx_Big = __shfl_sync(0xFFFFFFFF, maxx, id);
+			int miny_Big = __shfl_sync(0xFFFFFFFF, miny, id);
+			int maxy_Big = __shfl_sync(0xFFFFFFFF, maxy, id);
+
+			int numberOfPixel_Big = __shfl_sync(0xFFFFFFFF, numberOfPixel, id);
+			int pixelWidth_Big = __shfl_sync(0xFFFFFFFF, pixelWidth, id);
+			int numberOfPixelPerThread = ceilf(numberOfPixel_Big/32);
+
+			printf("Cycle : %d and threadn number %d \n", maxy_Big, threadIdx.x);
+
+			for (int i = threadIdx.x; i < numberOfPixel_Big; i = i + 32)
+			{
+				int x_Big = floorf(i/pixelWidth_Big);
+				int y_Big = i%pixelWidth_Big;
+				//printf("%d and %d  and %d and %d\n", x_Big, y_Big, i, pixelWidth_Big);
+			}
+		}
 	}
 
 	// We iterate over each pixel in the triangle's bounding box
@@ -318,7 +358,11 @@ __global__ void renderMeshes(
 	unsigned int meshIndex = blockIdx.z;
 
 	if(item >= totalItemsToRender || meshIndex >= meshCount || triangleIndex >= meshes[meshIndex].vertexCount / 3) {
-		return;
+		float4 fake_v0 = make_float4(-100,-100,-100,1);
+		float4 fake_v1 = make_float4(-100,-100,-100,1);
+		float4 fake_v2 = make_float4(-100,-100,-100,1);
+
+		rasteriseTriangle(fake_v0, fake_v1, fake_v2, meshes[0], 0, frameBuffer, depthBuffer, width, height);
 	}
 
     //for(unsigned int item = 0; item < totalItemsToRender; item++) {
@@ -553,7 +597,7 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
 	// Block y axis: max vertex count
 	// Block z axis: meshCount
 
-	const unsigned int threadsPerWorkQueueBlock = 8;
+	const unsigned int threadsPerWorkQueueBlock = 32;
 	const unsigned int threadsPerVertexBlock = 16;
 
 	std::cout << threadsPerWorkQueueBlock << '\n';

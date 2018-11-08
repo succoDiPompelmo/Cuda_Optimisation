@@ -216,6 +216,49 @@ __device__ float3 runFragmentShader(
     return colour;
 }
 
+__device__
+void rasteriseSinglePixel(GPUMesh &mesh,
+										float4 &v0, float4 &v1, float4 &v2,
+										unsigned int triangleIndex,
+										unsigned char* frameBuffer,
+										int* depthBuffer,
+										unsigned int const width,
+										unsigned int const height,
+										int x,
+										int y)
+{
+	float u, v, w;
+	// For each point in the bounding box, determine whether that point lies inside the triangle
+	if (isPointInTriangle(v0, v1, v2, x, y, u, v, w)) {
+		// If it does, compute the distance between that point on the triangle and the screen
+		float pixelDepth = computeDepth(v0, v1, v2, make_float3(u, v, w));
+		// If the point is closer than any point we have seen thus far, render it.
+		// Otherwise it is hidden behind another object, and we can throw it away
+		// Because it will be invisible anyway.
+						if (pixelDepth >= -1 && pixelDepth <= 1)
+						{
+							int myDepth = depthFloatToInt(pixelDepth);
+			int newDepth = atomicMin(&depthBuffer[y * width + x], myDepth);
+
+			// I realise this does not solve the race condition.
+								// However, it does reduce the probability it occurs.
+								// Solving this properly requires implementing a full-blown tile renderer.
+								// And I think it's more important to keep things as simple as possible here,
+								// so you can understand what is going on.
+			if(myDepth < newDepth) {
+				float3 pixelColour = runFragmentShader(mesh, triangleIndex, make_float3(u, v, w));
+
+				if(myDepth == depthBuffer[y * width + x]) {
+					frameBuffer[4 * (x + (width * y)) + 0] = pixelColour.x * 255.0f;
+						frameBuffer[4 * (x + (width * y)) + 1] = pixelColour.y * 255.0f;
+						frameBuffer[4 * (x + (width * y)) + 2] = pixelColour.z * 255.0f;
+						frameBuffer[4 * (x + (width * y)) + 3] = 255;
+				}
+			}
+		}
+	}
+}
+
 /**
  * The main procedure which rasterises all triangles on the framebuffer
  * @param transformedMesh         Transformed mesh object
@@ -230,7 +273,8 @@ __device__ void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
                         unsigned char* frameBuffer,
                         int* depthBuffer,
                         unsigned int const width,
-                        unsigned int const height ) {
+                        unsigned int const height,
+												GPUMesh* meshes) {
 
     // Compute the bounding box of the triangle.
     // Pixels that are intersecting with the triangle can only lie in this rectangle
@@ -254,12 +298,13 @@ __device__ void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
 	bool triangleTooBig = numberOfPixel > 100;
 	unsigned int votes = __ballot_sync(0xFFFFFFFF, triangleTooBig);
 	unsigned int count = __popc(votes);
-	if(count == 3)
+	if(count > 18)
 	{
-		printf("%s\n", "QUI");
 		while(__ffs(votes) > 0)
 		{
 			unsigned int id =  __ffs(votes)-1;
+
+			//printf("%d\n", id);
 
 			float4 v0_Big;
 			float4 v1_Big;
@@ -288,16 +333,17 @@ __device__ void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
 
 			int numberOfPixel_Big = __shfl_sync(0xFFFFFFFF, numberOfPixel, id);
 			int pixelWidth_Big = __shfl_sync(0xFFFFFFFF, pixelWidth, id);
-			int numberOfPixelPerThread = ceilf(numberOfPixel_Big/32);
+			int meshIndex_Big = __shfl_sync(0xFFFFFFFF, blockIdx.z, id);
+			unsigned int triangleIndex_Big = __shfl_sync(0xFFFFFFFF, triangleIndex, id);
 
-			printf("Cycle : %d and threadn number %d \n", maxy_Big, threadIdx.x);
+			int numberOfPixelPerThread = ceilf(numberOfPixel_Big/32);
 
 			for (int i = threadIdx.x; i < numberOfPixel_Big; i = i + 32)
 			{
 				int x_Big = floorf(i/pixelWidth_Big);
 				int y_Big = i%pixelWidth_Big;
-				//printf("%d and %d  and %d and %d\n", x_Big, y_Big, i, pixelWidth_Big);
 			}
+			votes &= ~(1 << (id));
 		}
 	}
 
@@ -362,7 +408,8 @@ __global__ void renderMeshes(
 		float4 fake_v1 = make_float4(-100,-100,-100,1);
 		float4 fake_v2 = make_float4(-100,-100,-100,1);
 
-		rasteriseTriangle(fake_v0, fake_v1, fake_v2, meshes[0], 0, frameBuffer, depthBuffer, width, height);
+		rasteriseTriangle(fake_v0, fake_v1, fake_v2, meshes[0], 0, frameBuffer, depthBuffer, width, height, meshes);
+		return;
 	}
 
     //for(unsigned int item = 0; item < totalItemsToRender; item++) {
@@ -376,7 +423,6 @@ __global__ void renderMeshes(
 	distanceOffset.y = distanceOffsetYQueue[item];
 	distanceOffset.z = distanceOffsetZQueue[item];
 
-
 	float4 v0 = meshes[meshIndex].vertices[triangleIndex * 3 + 0];
 	float4 v1 = meshes[meshIndex].vertices[triangleIndex * 3 + 1];
 	float4 v2 = meshes[meshIndex].vertices[triangleIndex * 3 + 2];
@@ -385,7 +431,7 @@ __global__ void renderMeshes(
 	runVertexShader(v1, distanceOffset, scale, width, height);
 	runVertexShader(v2, distanceOffset, scale, width, height);
 
-	rasteriseTriangle(v0, v1, v2, meshes[meshIndex], triangleIndex, frameBuffer, depthBuffer, width, height);
+	rasteriseTriangle(v0, v1, v2, meshes[meshIndex], triangleIndex, frameBuffer, depthBuffer, width, height, meshes);
 }
 
 
@@ -573,7 +619,6 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
     checkCudaErrors(cudaMalloc((void **)&distanceOffsetZQueueGPU, sizeof(float) * totalItemsToRender));
     checkCudaErrors(cudaMemcpy(distanceOffsetZQueueGPU, (float*)distanceOffsetZQueue, sizeof(float) * totalItemsToRender, cudaMemcpyHostToDevice));
 
-
     unsigned long workQueueSizeBytes = totalItemsToRender * sizeof(workItemGPU);
 
     workItemGPU* device_workQueue;
@@ -602,7 +647,6 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
 
 	std::cout << threadsPerWorkQueueBlock << '\n';
 	std::cout << threadsPerVertexBlock << '\n';
-	std::cout << meshes.size() << '\n';
 
 	GPUMesh* device_meshArray;
 	checkCudaErrors(cudaMalloc(&device_meshArray, meshes.size() * sizeof(GPUMesh)));

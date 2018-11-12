@@ -228,6 +228,7 @@ void rasteriseSinglePixel(GPUMesh &mesh,
 										int y)
 {
 	float u, v, w;
+	if (x > width || y > height || x < 0 || y < 0) return;
 	// For each point in the bounding box, determine whether that point lies inside the triangle
 	if (isPointInTriangle(v0, v1, v2, x, y, u, v, w)) {
 		// If it does, compute the distance between that point on the triangle and the screen
@@ -259,6 +260,21 @@ void rasteriseSinglePixel(GPUMesh &mesh,
 	}
 }
 
+
+__device__ float minCustomise(float x1, float x2, float x3)
+{
+	if (x1 < x2 && x1 < x3) return x1;
+	if (x2 < x1 && x2 < x3) return x2;
+	if (x3 < x1 && x3 < x2) return x3;
+}
+
+__device__ float maxCustomise(float x1, float x2, float x3)
+{
+	if (x1 > x2 && x1 > x3) return x1;
+	if (x2 > x1 && x2 > x3) return x2;
+	if (x3 > x1 && x3 > x2) return x3;
+}
+
 /**
  * The main procedure which rasterises all triangles on the framebuffer
  * @param transformedMesh         Transformed mesh object
@@ -278,79 +294,101 @@ __device__ void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
 
     // Compute the bounding box of the triangle.
     // Pixels that are intersecting with the triangle can only lie in this rectangle
-	int minx = int(floorf(fminf(fminf(v0.x, v1.x), v2.x)));
-	int maxx = int(ceilf(fmaxf(fmaxf(v0.x, v1.x), v2.x)));
-	int miny = int(floorf(fminf(fminf(v0.y, v1.y), v2.y)));
-	int maxy = int(ceilf(fmaxf(fmaxf(v0.y, v1.y), v2.y)));
+
+		int minx = int(floorf(fminf(fminf(v0.x, v1.x), v2.x)));
+		int maxx = int(ceilf(fmaxf(fmaxf(v0.x, v1.x), v2.x)));
+		int miny = int(floorf(fminf(fminf(v0.y, v1.y), v2.y)));
+		int maxy = int(ceilf(fmaxf(fmaxf(v0.y, v1.y), v2.y)));
 
 	// Make sure the screen coordinates stay inside the window
     // This ensures parts of the triangle that are outside the
     // view of the camera are not drawn.
+
+		/*
 	minx = max(minx, (unsigned int) 0);
 	maxx = min(maxx, width);
 	miny = max(miny, (unsigned int) 0);
 	maxy = min(maxy, height);
+*/
+
+	bool bigIsHere = false;
 
 	int pixelWidth = maxx - minx;
 	int pixelHeight = maxy - miny;
 	int numberOfPixel = pixelWidth * pixelHeight;
 
-	bool triangleTooBig = numberOfPixel > 100;
+	bool triangleTooBig = numberOfPixel > 32;
 	unsigned int votes = __ballot_sync(0xFFFFFFFF, triangleTooBig);
 	unsigned int count = __popc(votes);
-	if(count > 18)
+
+	while(__ffs(votes > 0))
 	{
-		while(__ffs(votes) > 0)
+		unsigned int id =  __ffs(votes)-1;
+		if (id == threadIdx.x) bigIsHere = true;
+
+		//if (threadIdx.x != 0) printf("%d\n", threadIdx.x);
+
+		float4 v0_Big;
+		float4 v1_Big;
+		float4 v2_Big;
+
+		v0_Big.x = __shfl_sync(0xFFFFFFFF, v0.x, id);
+		v1_Big.x = __shfl_sync(0xFFFFFFFF, v1.x, id);
+		v2_Big.x = __shfl_sync(0xFFFFFFFF, v2.x, id);
+
+		v0_Big.y = __shfl_sync(0xFFFFFFFF, v0.y, id);
+		v1_Big.y = __shfl_sync(0xFFFFFFFF, v1.y, id);
+		v2_Big.y = __shfl_sync(0xFFFFFFFF, v2.y, id);
+
+		v0_Big.z = __shfl_sync(0xFFFFFFFF, v0.z, id);
+		v1_Big.z = __shfl_sync(0xFFFFFFFF, v1.z, id);
+		v2_Big.z = __shfl_sync(0xFFFFFFFF, v2.z, id);
+
+		v0_Big.w = __shfl_sync(0xFFFFFFFF, v0.w, id);
+		v1_Big.w = __shfl_sync(0xFFFFFFFF, v1.w, id);
+		v2_Big.w = __shfl_sync(0xFFFFFFFF, v2.w, id);
+
+		int minx_Big = __shfl_sync(0xFFFFFFFF, minx, id);
+		int maxx_Big = __shfl_sync(0xFFFFFFFF, maxx, id);
+		int miny_Big = __shfl_sync(0xFFFFFFFF, miny, id);
+		int maxy_Big = __shfl_sync(0xFFFFFFFF, maxy, id);
+
+		int numberOfPixel_Big = __shfl_sync(0xFFFFFFFF, numberOfPixel, id);
+		int pixelWidth_Big =    __shfl_sync(0xFFFFFFFF, pixelWidth, id);
+		int pixelHeight_Big =   __shfl_sync(0xFFFFFFFF, pixelHeight, id);
+		int meshIndex_Big =     __shfl_sync(0xFFFFFFFF, blockIdx.z, id);
+		unsigned int triangleIndex_Big = __shfl_sync(0xFFFFFFFF, triangleIndex, id);
+
+		int numberOfPixelPerThread = ceilf(numberOfPixel_Big/32);
+
+		//printf("%d %d %d %d\n", numberOfPixel_Big, pixelWidth_Big, pixelHeight_Big, numberOfPixelPerThread);
+
+		for (int i = threadIdx.x; i < numberOfPixel_Big; i = i + 32)
 		{
-			unsigned int id =  __ffs(votes)-1;
+			int y_Big = (i/pixelWidth_Big);
+			int x_Big = i%pixelWidth_Big;
 
-			//printf("%d\n", id);
+			//if (i < 300) printf("%d %d %d %d\n",x_Big, y_Big, i, pixelWidth_Big);
 
-			float4 v0_Big;
-			float4 v1_Big;
-			float4 v2_Big;
-
-			v0_Big.x = __shfl_sync(0xFFFFFFFF, v0.x, id);
-			v1_Big.x = __shfl_sync(0xFFFFFFFF, v1.x, id);
-			v2_Big.x = __shfl_sync(0xFFFFFFFF, v2.x, id);
-
-			v0_Big.y = __shfl_sync(0xFFFFFFFF, v0.y, id);
-			v1_Big.y = __shfl_sync(0xFFFFFFFF, v1.y, id);
-			v2_Big.y = __shfl_sync(0xFFFFFFFF, v2.y, id);
-
-			v0_Big.z = __shfl_sync(0xFFFFFFFF, v0.z, id);
-			v1_Big.z = __shfl_sync(0xFFFFFFFF, v1.z, id);
-			v2_Big.z = __shfl_sync(0xFFFFFFFF, v2.z, id);
-
-			v0_Big.w = __shfl_sync(0xFFFFFFFF, v0.w, id);
-			v1_Big.w = __shfl_sync(0xFFFFFFFF, v1.w, id);
-			v2_Big.w = __shfl_sync(0xFFFFFFFF, v2.w, id);
-
-			int minx_Big = __shfl_sync(0xFFFFFFFF, minx, id);
-			int maxx_Big = __shfl_sync(0xFFFFFFFF, maxx, id);
-			int miny_Big = __shfl_sync(0xFFFFFFFF, miny, id);
-			int maxy_Big = __shfl_sync(0xFFFFFFFF, maxy, id);
-
-			int numberOfPixel_Big = __shfl_sync(0xFFFFFFFF, numberOfPixel, id);
-			int pixelWidth_Big = __shfl_sync(0xFFFFFFFF, pixelWidth, id);
-			int meshIndex_Big = __shfl_sync(0xFFFFFFFF, blockIdx.z, id);
-			unsigned int triangleIndex_Big = __shfl_sync(0xFFFFFFFF, triangleIndex, id);
-
-			int numberOfPixelPerThread = ceilf(numberOfPixel_Big/32);
-
-			for (int i = threadIdx.x; i < numberOfPixel_Big; i = i + 32)
-			{
-				int x_Big = floorf(i/pixelWidth_Big);
-				int y_Big = i%pixelWidth_Big;
-			}
-			votes &= ~(1 << (id));
+			rasteriseSinglePixel(meshes[meshIndex_Big], v0_Big, v1_Big, v2_Big,
+														triangleIndex_Big, frameBuffer, depthBuffer,
+														width, height, minx_Big + x_Big, miny_Big + y_Big);
 		}
+
+		votes &= ~(1 << (id));
 	}
+
+	//printf("%d\n", threadIdx.x);
+
+	if (bigIsHere) return;
+
+
 
 	// We iterate over each pixel in the triangle's bounding box
 	for (unsigned int x = minx; x < maxx; x++) {
 		for (unsigned int y = miny; y < maxy; y++) {
 			float u, v, w;
+			if (x > width || y > height || x < 0 || y < 0) return;
 			// For each point in the bounding box, determine whether that point lies inside the triangle
 			if (isPointInTriangle(v0, v1, v2, x, y, u, v, w)) {
 				// If it does, compute the distance between that point on the triangle and the screen
@@ -372,7 +410,7 @@ __device__ void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
 						float3 pixelColour = runFragmentShader(mesh, triangleIndex, make_float3(u, v, w));
 
 						if(myDepth == depthBuffer[y * width + x]) {
-							frameBuffer[4 * (x + (width * y)) + 0] = pixelColour.x * 255.0f;
+								frameBuffer[4 * (x + (width * y)) + 0] = pixelColour.x * 255.0f;
 						    frameBuffer[4 * (x + (width * y)) + 1] = pixelColour.y * 255.0f;
 						    frameBuffer[4 * (x + (width * y)) + 2] = pixelColour.z * 255.0f;
 						    frameBuffer[4 * (x + (width * y)) + 3] = 255;
@@ -403,15 +441,6 @@ __global__ void renderMeshes(
 	unsigned int triangleIndex = blockIdx.y * blockDim.y + threadIdx.y;
 	unsigned int meshIndex = blockIdx.z;
 
-	if(item >= totalItemsToRender || meshIndex >= meshCount || triangleIndex >= meshes[meshIndex].vertexCount / 3) {
-		float4 fake_v0 = make_float4(-100,-100,-100,1);
-		float4 fake_v1 = make_float4(-100,-100,-100,1);
-		float4 fake_v2 = make_float4(-100,-100,-100,1);
-
-		rasteriseTriangle(fake_v0, fake_v1, fake_v2, meshes[0], 0, frameBuffer, depthBuffer, width, height, meshes);
-		return;
-	}
-
     //for(unsigned int item = 0; item < totalItemsToRender; item++) {
 	//for (unsigned int meshIndex = 0; meshIndex < meshCount; meshIndex++) {
     //for(unsigned int triangleIndex = 0; triangleIndex < meshes[meshIndex].vertexCount / 3; triangleIndex++) {
@@ -430,6 +459,12 @@ __global__ void renderMeshes(
 	runVertexShader(v0, distanceOffset, scale, width, height);
 	runVertexShader(v1, distanceOffset, scale, width, height);
 	runVertexShader(v2, distanceOffset, scale, width, height);
+
+	if(item >= totalItemsToRender || meshIndex >= meshCount || triangleIndex >= meshes[meshIndex].vertexCount / 3) {
+		v0 = make_float4(0,0,0,1);
+		v1 = make_float4(0,0,0,1);
+		v2 = make_float4(0,0,0,1);
+	}
 
 	rasteriseTriangle(v0, v1, v2, meshes[meshIndex], triangleIndex, frameBuffer, depthBuffer, width, height, meshes);
 }
@@ -644,9 +679,6 @@ std::vector<unsigned char> rasteriseGPU(std::string inputFile, unsigned int widt
 
 	const unsigned int threadsPerWorkQueueBlock = 32;
 	const unsigned int threadsPerVertexBlock = 16;
-
-	std::cout << threadsPerWorkQueueBlock << '\n';
-	std::cout << threadsPerVertexBlock << '\n';
 
 	GPUMesh* device_meshArray;
 	checkCudaErrors(cudaMalloc(&device_meshArray, meshes.size() * sizeof(GPUMesh)));

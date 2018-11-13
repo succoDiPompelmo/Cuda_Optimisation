@@ -311,13 +311,14 @@ __device__ void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
 	maxy = min(maxy, height);
 */
 
+	// IS this thread the one responsible for big triangle
 	bool bigIsHere = false;
 
 	int pixelWidth = maxx - minx;
 	int pixelHeight = maxy - miny;
 	int numberOfPixel = pixelWidth * pixelHeight;
 
-	bool triangleTooBig = numberOfPixel > 32;
+	bool triangleTooBig = numberOfPixel > 64;
 	unsigned int votes = __ballot_sync(0xFFFFFFFF, triangleTooBig);
 	unsigned int count = __popc(votes);
 

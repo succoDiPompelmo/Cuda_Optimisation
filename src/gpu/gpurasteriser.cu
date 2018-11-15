@@ -318,7 +318,7 @@ __device__ void rasteriseTriangle( float4 &v0, float4 &v1, float4 &v2,
 	int pixelHeight = maxy - miny;
 	int numberOfPixel = pixelWidth * pixelHeight;
 
-	bool triangleTooBig = numberOfPixel > 64;
+	bool triangleTooBig = numberOfPixel > 32;
 	unsigned int votes = __ballot_sync(0xFFFFFFFF, triangleTooBig);
 	unsigned int count = __popc(votes);
 
